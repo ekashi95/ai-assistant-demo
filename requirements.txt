@@ -3,3 +3,12 @@ python-docx
 openai
 pandas
 openpyxl
+matplotlib
+seaborn
+scipy
+scikit-learn
+statsmodels
+lifelines
+biopython
+scikit-image
+pingouin
