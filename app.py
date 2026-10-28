@@ -307,17 +307,37 @@ if st.session_state.initialized:
             st.code(st.session_state.pending_code, language="python")
             
             if st.button("🚀 Делай, что задумал (Запустить код)", use_container_width=True, type="primary"):
-                with st.spinner("Выполнение расчетов..."):
+                with st.spinner("Выполнение расчетов и проверка библиотек..."):
+                    import subprocess
+                    import sys
+                    
                     old_stdout = sys.stdout
                     redirected_output = sys.stdout = io.StringIO()
                     
                     try:
-                        # ВАЖНО: передаем st.session_state.df в локальный контекст выполнения exec.
-                        # ИИ в промпте знает, что датафрейм называется `df`.
+                        # 1. Автоматический поиск и установка недостающих библиотек
+                        # Мы сканируем сгенерированный ИИ код на ключевое слово 'import'
+                        lines = st.session_state.pending_code.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if line.startswith('import ') or line.startswith('from '):
+                                # Вытаскиваем чистое имя модуля (например, из 'from scipy.stats import...' берем 'scipy')
+                                parts = line.split()
+                                if len(parts) > 1:
+                                    module_name = parts[1].split('.')[0]
+                                    
+                                    # Проверяем, установлена ли библиотека в системе
+                                    try:
+                                        __import__(module_name)
+                                    except ModuleNotFoundError:
+                                        # Если библиотеки нет, незаметно ставим её через pip на лету!
+                                        st.caption(f"📦 Библиотека `{module_name}` не найдена. Устанавливаю...")
+                                        subprocess.check_call([sys.executable, "-m", "pip", "install", module_name])
+                        
+                        # 2. Обычное выполнение проверенного кода
                         local_vars = {"df": st.session_state.df, "pd": pd}
                         exec(st.session_state.pending_code, {}, local_vars)
                         
-                        # Если ИИ изменил датафрейм (например, удалил строки), сохраняем изменения назад в сессию
                         if "df" in local_vars:
                             st.session_state.df = local_vars["df"]
                             
