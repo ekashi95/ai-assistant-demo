@@ -3,6 +3,7 @@ import json
 from docx import Document
 from docx.shared import Inches
 import io
+import os
 import sys
 from openai import OpenAI
 import pandas as pd
