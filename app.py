@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 from docx import Document
+from docx.shared import Inches
 import io
 import sys
 from openai import OpenAI
@@ -54,7 +55,7 @@ def call_llm_assistant(user_input, context="", data_structure="Данные ещ
     Считай, что файл уже находится в памяти в виде датафрейма с именем `df`. Твой код должен работать напрямую с объектом `df`.
     
     Ты должен проанализировать запрос пользователя и решить, требуется ли написание Python-кода для обработки данных:
-    1. Если пользователю нужен расчет, очистка, графики или манипуляции с данными, верни "type": "code".
+    1. Если пользователю нужен расчет, очистка, графики или манипуляции с данными, верни "type": "code". 
     2. Если пользователь задает теоретический вопрос, просит объяснить формулу или методологию БЕЗ написания кода, верни "type": "text".
     
     Ты ОБЯЗАН отвечать строго в формате JSON со следующей структурой:
@@ -63,6 +64,8 @@ def call_llm_assistant(user_input, context="", data_structure="Данные ещ
         "content": "Твой развернутый текстовый ответ, пояснения, формулы в формате LaTeX (используй $...$ для инлайна и $$...$$ для блоков)",
         "code": "Полный, рабочий и безопасный Python-код для обработки df. Заполняй это поле ТОЛЬКО если type равен 'code'. В коде используй print() для вывода результатов."
     }}
+
+    Если пользователь просит построить график, обязательно добавляй в конец кода строку plt.savefig('chart.png', bbox_inches='tight') и закрывай график через plt.close().
     """
     
     full_user_content = f"Контекст исследования: {context}\n\nЗапрос пользователя: {user_input}"
@@ -97,37 +100,39 @@ def call_llm_assistant(user_input, context="", data_structure="Данные ещ
 # --- 3. ФУНКЦИЯ ГЕНЕРАЦИИ ЧЕРНОВИКА СТАТЬИ (.DOCX) ---
 def generate_docx_with_llm(chat_history, user_goal, data_structure, execution_log):
     """
-    Финальный сборщик черновика. Отправляет всю историю работы в LLM,
-    чтобы модель написала связный научный текст на основе реальных расчетов.
+    Финальный сборщик черновика .docx. Отправляет историю расчетов в LLM,
+    генерирует текст и вставляет графики, если они были построены.
     """
-    
-    # 1. Формируем лог выполненных вычислений для ИИ
+    if client is None:
+        st.error("Не удалось сгенерировать статью: отсутствует API-ключ в настройках Secrets.")
+        return None
+
+    # 1. Собираем логи вычислений и проверяем наличие сохраненного графика
     captured_results = "\n".join([f"Результат запуска {i+1}:\n{log}" for i, log in enumerate(execution_log)])
     if not captured_results:
         captured_results = "Код на данном этапе не выполнялся, только теоретическое обсуждение."
+    
+    chart_exists = os.path.exists("chart.png")
 
-    # 2. Пишем промпт для сборки статьи
-    academic_system_prompt = """
-    Ты — выпускающий редактор ведущего научного журнала (Scopus Q1).
-    Твоя задача — собрать связный, строгий черновик научной статьи на русском языке на основе предоставленных материалов исследования.
-    Используй академический стиль, избегай общих фраз и разговорных выражений. Опирайся ТОЛЬКО на реальные цели и результаты расчетов.
+    # 2. Промпт для ИИ с требованием описать график
+    academic_system_prompt = f"""
+    Ты — выпускающий редактор научного журнала (Scopus Q1).
+    Твоя задача — собрать связный, строгий черновик научной статьи на русском языке на основе материалов исследования.
+    Используй академический стиль, избегай общих фраз. Опирайся ТОЛЬКО на реальные цели и результаты расчетов.
+    
+    График в исследовании: {"Был успешно построен и сохранен на диск под именем chart.png" if chart_exists else "Не строился"}.
+    Если график строился, обязательно включи в раздел "results" его детальный академический разбор, описание трендов и зависимостей, которые видны из расчетов.
     
     Верни ответ строго в формате JSON со следующей структурой:
-    {
+    {{
         "introduction": "Текст раздела 'Введение'. Опиши актуальность и цель работы на основе вводных данных пользователя.",
-        "materials_and_methods": "Текст раздела 'Материалы и методы'. Опиши структуру выборки и математические/статистические методы, которые ИИ и пользователь обсуждали в чате.",
-        "results": "Текст раздела 'Результаты и обсуждение'. Сюда нужно интегрировать РЕАЛЬНЫЕ цифры и выводы из логов вычислений. Если в логах есть конкретные метрики, медианы или p-value, укажи их."
-    }
+        "materials_and_methods": "Текст раздела 'Материалы и методы'. Опиши структуру выборки и математические/статистические методы, которые обсуждались.",
+        "results": "Текст раздела 'Результаты и обсуждение'. Интегрируй РЕАЛЬНЫЕ цифры из логов вычислений и описание графика (если он есть)."
+    }}
     """
     
-    user_materials = f"""
-    ЦЕЛЬ ИССЛЕДОВАНИЯ: {user_goal}
-    СТРУКТУРА ИСХОДНЫХ ДАННЫХ: {data_structure}
-    ЛОГИ РЕАЛЬНЫХ ВЫЧИСЛЕНИЙ:
-    {captured_results}
-    """
+    user_materials = f"ЦЕЛЬ: {user_goal}\nСТРУКТУРА ДАННЫХ: {data_structure}\nЛОГИ РАСЧЕТОВ:\n{captured_results}"
     
-    # 3. Делаем запрос к ProxyAPI
     try:
         response = client.chat.completions.create(
             model="openai/gpt-4o",
@@ -138,6 +143,8 @@ def generate_docx_with_llm(chat_history, user_goal, data_structure, execution_lo
             ],
             temperature=0.3
         )
+        
+        # Исправление для шлюза ProxyAPI
         try:
             content_text = response.choices.message.content
         except (AttributeError, TypeError):
@@ -145,39 +152,47 @@ def generate_docx_with_llm(chat_history, user_goal, data_structure, execution_lo
             
         article_json = json.loads(content_text)
     except Exception as e:
-        # На случай сбоя API создаем базовый аварийный текст
         article_json = {
             "introduction": f"Введение к исследованию: {user_goal}",
             "materials_and_methods": "Методы обработки данных включают программный анализ на языке Python.",
-            "results": f"Произошла ошибка генерации текста через API: {str(e)}. Однако логи ваших расчетов сохранены."
+            "results": f"Произошла ошибка генерации текста через API: {str(e)}."
         }
 
-    # 4. Записываем полученный от ИИ текст в документ Word (.docx)
+    # 3. Записываем текст и графики в документ Word
     doc = Document()
     style = doc.styles['Normal']
     style.font.name = 'Times New Roman'
     
-    # Главный заголовок
     doc.add_heading('Материалы к научной статье', level=1)
     doc.add_paragraph("Документ подготовлен интерактивным ИИ-ассистентом на основе проведенного анализа данных.")
     
-    # Раздел 1
+    # Раздел 1. Введение
     doc.add_heading('1. Введение', level=2)
     doc.add_paragraph(article_json.get("introduction", ""))
     
-    # Раздел 2
+    # Раздел 2. Методы
     doc.add_heading('2. Материалы и методы', level=2)
     doc.add_paragraph(article_json.get("materials_and_methods", ""))
     
-    # Раздел 3
+    # Раздел 3. Результаты
     doc.add_heading('3. Результаты и обсуждение', level=2)
     doc.add_paragraph(article_json.get("results", ""))
     
-    # Принудительно выводим сырые логи расчетов в самом конце, чтобы ученый их не потерял
+    # ВСТАВКА ГРАФИКА: Если файл с графиком существует, добавляем его в Word
+    if chart_exists:
+        doc.add_paragraph() # Небольшой отступ
+        # Добавляем картинку, ограничивая ширину (например, 5.5 дюймов для стандартного листа A4)
+        doc.add_picture("chart.png", width=Inches(5.5))
+        # Добавляем подпись к рисунку по ГОСТу
+        caption = doc.add_paragraph("Рисунок 1 – График зависимости показателей, построенный в ходе автоматизированного анализа данных.")
+        caption.style = 'Quote' # Оформляем как цитату/выделенный текст
+        doc.add_paragraph()
+    
+    # Приложение с логами расчетов
     doc.add_heading('Приложение: Протокол вычислений (Сырые логи)', level=2)
     doc.add_paragraph(captured_results, style='Quote')
 
-    # Сохраняем файл в буфер памяти
+    # Сохраняем в память для скачивания
     file_stream = io.BytesIO()
     doc.save(file_stream)
     file_stream.seek(0)
@@ -240,8 +255,9 @@ with st.sidebar:
         st.write("---")
         st.header("📄 4. Экспорт результатов")
         if st.button("📦 Сформировать черновик статьи", use_container_width=True):
+            if os.path.exists("chart.png"):
+                os.remove("chart.png") # Удаляем старый график, если он остался на диске
             with st.spinner("ИИ анализирует ход исследования и пишет текст статьи..."):
-                # Вызываем обновленную функцию с реальными логами вычислений
                 docx_data = generate_docx_with_llm(
                     st.session_state.chat_history, 
                     user_goal, 
@@ -249,13 +265,14 @@ with st.sidebar:
                     st.session_state.execution_log
                 )
                 
-                st.download_button(
-                    label="📥 Скачать черновик .docx",
-                    data=docx_data,
-                    file_name="scientific_draft.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True
-                )
+                if docx_data:
+                    st.download_button(
+                        label="📥 Скачать черновик .docx",
+                        data=docx_data,
+                        file_name="scientific_draft.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
 
 
 # --- 5. ИНТЕРФЕЙС: ОСНОВНАЯ ЗОНА (ОБНОВЛЕНИЕ ДЛЯ ВЫЗОВА API) ---
