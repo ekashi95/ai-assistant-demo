@@ -307,47 +307,59 @@ if st.session_state.initialized:
             st.code(st.session_state.pending_code, language="python")
             
             if st.button("🚀 Делай, что задумал (Запустить код)", use_container_width=True, type="primary"):
-                with st.spinner("Выполнение расчетов и проверка библиотек..."):
-                    import subprocess
+                with st.spinner("Выполнение расчетов и проверка модулей..."):
                     import sys
                     
                     old_stdout = sys.stdout
                     redirected_output = sys.stdout = io.StringIO()
+                    missing_module = None
                     
                     try:
-                        # 1. Автоматический поиск и установка недостающих библиотек
-                        # Мы сканируем сгенерированный ИИ код на ключевое слово 'import'
+                        # 1. Предварительная мягкая проверка импортов без падения сервера
                         lines = st.session_state.pending_code.split('\n')
                         for line in lines:
                             line = line.strip()
                             if line.startswith('import ') or line.startswith('from '):
-                                # Вытаскиваем чистое имя модуля (например, из 'from scipy.stats import...' берем 'scipy')
                                 parts = line.split()
                                 if len(parts) > 1:
                                     module_name = parts[1].split('.')[0]
-                                    
-                                    # Проверяем, установлена ли библиотека в системе
                                     try:
                                         __import__(module_name)
                                     except ModuleNotFoundError:
-                                        # Если библиотеки нет, незаметно ставим её через pip на лету!
-                                        st.caption(f"📦 Библиотека `{module_name}` не найдена. Устанавливаю...")
-                                        subprocess.check_call([sys.executable, "-m", "pip", "install", module_name])
+                                        missing_module = module_name
+                                        break
                         
-                        # 2. Обычное выполнение проверенного кода
-                        local_vars = {"df": st.session_state.df, "pd": pd}
-                        exec(st.session_state.pending_code, {}, local_vars)
-                        
-                        if "df" in local_vars:
-                            st.session_state.df = local_vars["df"]
+                        # 2. Если какого-то модуля не хватает, прерываем выполнение с понятным текстом
+                        if missing_module:
+                            stdout_result = (
+                                f"⚠️ Не удалось запустить код. ИИ использовал библиотеку `{missing_module}`, "
+                                f"которая не установлена на сервере.\n"
+                                f"Пожалуйста, попросите ИИ в поле ниже: 'Перепиши код без использования {missing_module}'."
+                            )
+                        else:
+                            # Если всё на месте — выполняем код над датафреймом
+                            local_vars = {"df": st.session_state.df, "pd": pd}
+                            exec(st.session_state.pending_code, {}, local_vars)
                             
-                        stdout_result = redirected_output.getvalue()
-                        if not stdout_result:
-                            stdout_result = "Код выполнен успешно, но ничего не вывел через print()."
+                            if "df" in local_vars:
+                                st.session_state.df = local_vars["df"]
+                                
+                            stdout_result = redirected_output.getvalue()
+                            if not stdout_result:
+                                stdout_result = "Код выполнен успешно, но ничего не вывел через print()."
+                                
                     except Exception as e:
                         stdout_result = f"Ошибка выполнения скрипта: {str(e)}"
                     finally:
                         sys.stdout = old_stdout
+                
+                st.session_state.execution_log.append(stdout_result)
+                st.session_state.chat_history.append({
+                    "role": "assistant", 
+                    "content": f"**Результат шага обработки:**\n```\n{stdout_result}\n```"
+                })
+                st.session_state.pending_code = None
+                st.rerun()
                 
                 st.session_state.execution_log.append(stdout_result)
                 st.session_state.chat_history.append({
