@@ -147,11 +147,15 @@ def generate_docx_with_llm(chat_history, user_goal, data_structure, execution_lo
         
         # Исправление для шлюза ProxyAPI
         try:
-            content_text = response.choices.message.content
+            content_text = response.choices[0].message.content
         except (AttributeError, TypeError):
-            content_text = response.choices['message']['content']
+            try:
+                content_text = response.choices[0]['message']['content']
+            except (AttributeError, TypeError):
+                content_text = response.choices['message']['content']
             
         article_json = json.loads(content_text)
+        
     except Exception as e:
         article_json = {
             "introduction": f"Введение к исследованию: {user_goal}",
