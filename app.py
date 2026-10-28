@@ -138,7 +138,12 @@ def generate_docx_with_llm(chat_history, user_goal, data_structure, execution_lo
             ],
             temperature=0.3
         )
-        article_json = json.loads(response.choices.message.content)
+        try:
+            content_text = response.choices.message.content
+        except (AttributeError, TypeError):
+            content_text = response.choices['message']['content']
+            
+        article_json = json.loads(content_text)
     except Exception as e:
         # На случай сбоя API создаем базовый аварийный текст
         article_json = {
