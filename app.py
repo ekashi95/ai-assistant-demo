@@ -3,6 +3,7 @@ from docx import Document
 import io
 import sys
 from openai import OpenAI
+import pandas as pd
 
 client = OpenAI(
     api_key=st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else None,
