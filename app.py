@@ -36,6 +36,13 @@ def call_llm_assistant(user_input, context="", data_structure="Данные ещ
     """
     Вызов LLM через ProxyAPI с передачей структуры загруженного файла.
     """
+    if client is None:
+        return {
+            "type": "text",
+            "content": "❌ **Ошибка авторизации:** API-ключ `OPENAI_API_KEY` не найден в настройках (Secrets).",
+            "code": ""
+        }
+
     system_prompt = f"""
     Ты — ИИ-соавтор научных статей и эксперт по анализу данных (Data Scientist).
     Твоя задача — помогать исследователю анализировать данные и писать черновик научной статьи на русском языке.
@@ -71,7 +78,13 @@ def call_llm_assistant(user_input, context="", data_structure="Данные ещ
             temperature=0.2
         )
         
-        result_json = json.loads(response.choices.message.content)
+        # Исправление для форматов ProxyAPI/старых библиотек
+        try:
+            content_text = response.choices[0].message.content
+        except (AttributeError, TypeError):
+            content_text = response.choices[0]['message']['content']
+            
+        result_json = json.loads(content_text)
         return result_json
 
     except Exception as e:
